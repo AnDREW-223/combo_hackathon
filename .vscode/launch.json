@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI - 開發伺服器",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--reload", "--port", "8002"],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "jinja": true
+    }
+  ]
+}
