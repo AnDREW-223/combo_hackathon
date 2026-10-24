@@ -154,7 +154,7 @@ export function Bubble({ text, from }: { text: string; from: string }) {
     <div className="rounded-3xl bg-[#c9dde0] p-3">
       <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-teal-900">
         <span className="grid size-5 place-items-center rounded-full bg-[#06c755] text-[9px] font-black text-white">L</span>
-        CalmPort
+        康博集團
       </div>
       <motion.div
         key={text}
