@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   APPTS,
   BRANDS,
@@ -64,6 +64,7 @@ export const useStore = () => useContext(Ctx)
 
 const now = () => new Date().toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 let uid = 100
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8100'
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [personaId, setPersonaId] = useState('p1')
@@ -93,9 +94,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200)
   }, [])
 
+  useEffect(() => {
+    fetch(`${backendUrl}/api/suggestions`)
+      .then((response) => {
+        if (!response.ok) throw new Error('後端未回應建議資料')
+        return response.json() as Promise<Suggestion[]>
+      })
+      .then((items) => setSugs(items))
+      .catch(() => {
+        // 保留原本的前端假資料，讓後端暫時離線時畫面仍可展示。
+      })
+  }, [])
+
   const setStatus = useCallback(
     (id: string, s: SugStatus) => {
+      const original = suggestions.find((x) => x.id === id)
       setSugs((list) => list.map((x) => (x.id === id ? { ...x, status: s } : x)))
+      const endpoint = s === 'approved'
+        ? `/api/suggestions/${id}/approve`
+        : s === 'sent'
+          ? `/api/suggestions/${id}/mark-sent`
+          : null
+      if (endpoint) {
+        void fetch(`${backendUrl}${endpoint}`, { method: 'POST' })
+          .then(async (response) => {
+            if (!response.ok) throw new Error(await response.text())
+            return response.json() as Promise<Suggestion>
+          })
+          .then((saved) => setSugs((list) => list.map((item) => (item.id === id ? saved : item))))
+          .catch(() => {
+            if (original) setSugs((list) => list.map((item) => (item.id === id ? original : item)))
+            toast(
+              s === 'sent'
+                ? 'LINE 推送未完成，請確認 Agent 與 LINE 設定後再試'
+                : '後端未完成狀態更新，請稍後再試',
+              'warn',
+            )
+          })
+      }
       if (s === 'booked') {
         const sug = suggestions.find((x) => x.id === id)
         const m = MEMBERS.find((m) => m.id === sug?.memberId)
@@ -106,7 +142,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ])
       }
     },
-    [suggestions],
+    [suggestions, toast],
   )
 
   const appts = useMemo(() => {

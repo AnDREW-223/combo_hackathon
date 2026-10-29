@@ -1,4 +1,11 @@
 .env
+.env.*
+!.env.example
+*.log
+*.db
+*.db-shm
+*.db-wal
+agent_debug.log
 .venv/
 venv/
 __pycache__/

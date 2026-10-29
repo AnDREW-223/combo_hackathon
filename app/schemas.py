@@ -48,10 +48,17 @@ class GeneratorDraft(BaseModel):
     draft_message: str
 
 
-class ValidatorResult(BaseModel):
-    approved: bool
-    rewritten_message: str
-    violation_reasons: list[str] = Field(default_factory=list)
+class ConversationMessage(BaseModel):
+    """LINE 對話暫存的一則訊息，不寫入日誌或資料庫。"""
+
+    role: Literal["user", "assistant"]
+    text: str = Field(min_length=1, max_length=600)
+
+
+class ConversationReply(BaseModel):
+    """聊天 Agent 的結構化單輪回覆。"""
+
+    reply: str = Field(min_length=1, max_length=800)
 
 
 class PointsIncentive(BaseModel):
@@ -67,7 +74,9 @@ class RecommendationResponse(BaseModel):
     recommended_treatment: str
     points_incentive: PointsIncentive
     final_push_message: str
-    generator_validated: bool
+    generator_validated: bool = Field(
+        description="是否通過本機目錄與禁用字詞檢查；不代表人工或法遵核准。"
+    )
     requires_human_review: bool = True
     delivery_eligible: bool = False
     review_reasons: list[str] = Field(default_factory=list)
