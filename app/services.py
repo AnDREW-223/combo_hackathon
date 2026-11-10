@@ -266,15 +266,15 @@ def cross_brand_incentive_text(
 ) -> str:
     """用可解釋規則補上跨品牌誘因；不宣稱醫療效果。"""
 
-    used_brands = {purchase.brand for purchase in history.purchases}
+    recent_purchases = sorted(history.purchases, key=lambda purchase: purchase.purchased_on, reverse=True)
     source_brand = next(
-        (brand for brand in used_brands if brand != option.brand), None
+        (purchase.brand for purchase in recent_purchases if purchase.brand != option.brand), None
     )
     if points:
-        source = f"您近期使用過{source_brand}服務，" if source_brand else ""
+        source = f"您曾使用{source_brand}的服務，" if source_brand else ""
         return (
-            f"{source}本次可優先保留 {points} 點作為跨品牌服務諮詢的活動示範；"
-            "實際使用方式與適用性將由服務人員確認。"
+            f"{source}若想了解{option.brand}的服務，可詢問服務人員本次示範的 {points} 點轉介方案。"
+            "實際資格與折抵方式以活動規則為準。"
         )
     return "跨品牌服務內容與活動資格，將由服務人員依您的需求協助確認。"
 
@@ -308,7 +308,10 @@ class RecommendationService:
 
         try:
             gemini = GeminiStructuredClient()
-            draft = await GeneratorAgent(gemini).generate(features, SERVICE_CATALOG)
+            latest_purchase = max(history.purchases, key=lambda item: item.purchased_on, default=None)
+            draft = await GeneratorAgent(gemini).generate(
+                features, SERVICE_CATALOG, latest_purchase.brand if latest_purchase else None
+            )
         except (GeminiNotConfiguredError, GeminiAPIError):
             # 額度、網路或設定異常時直接退回本機規則，不重送 Gemini 請求。
             logger.exception("Gemini 無法完成推薦，改用本機規則產生待審核草稿。")

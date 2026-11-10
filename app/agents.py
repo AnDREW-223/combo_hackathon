@@ -214,13 +214,17 @@ class GeneratorAgent:
         self._gemini = gemini
 
     async def generate(
-        self, features: CustomerFeatures, eligible_options: list[EligibleOption]
+        self, features: CustomerFeatures, eligible_options: list[EligibleOption],
+        recent_brand: str | None = None,
     ) -> GeneratorDraft:
         system_prompt = """
-你是康博集團服務資訊助理。用繁體中文根據一般消費偏好，從候選清單選一項，
-產生非診斷性的偏好假設與簡短、溫暖且可自由略過的 LINE 文案。
-品牌與服務名稱必須從清單原樣選擇；不得診斷、推測疾病、宣稱療效或保證，
-不得施壓或製造焦慮。只輸出符合 Schema 的 JSON。
+你是康博集團服務資訊助理。用繁體中文產生待人工審核的推薦，只輸出符合 Schema 的 JSON。
+1. 以 preference_tags 辨識健康照護或美學服務偏好。標籤只供內部判斷，不把消費行為當成健康狀況，不在 LINE 揭露敏感標籤。
+2. hidden_need 寫出一項可由顧客確認的下一步需求假設，說明支持它的已知偏好。證據不足時寫明待確認，不自行補造需求。
+3. 從候選清單原樣選取一個品牌與服務。有同等合適的選項時，優先選與最近使用品牌不同的服務。
+4. draft_message 是顧客看到的溫暖 LINE 文案。先說為什麼現在推薦，引用可用的近期服務偏好或到訪間隔；若缺乏時機訊號，只說可在下次安排前參考，不暗示急迫性。
+5. 接著說明推薦哪項服務、能協助顧客釐清什麼具體問題，以及可選擇的下一步。例如先了解服務流程與可選項目，再決定是否預約。不得診斷、推測疾病、承諾改善或宣稱療效。
+企業點數與活動資格由系統另行附上，請勿自行填寫點數、折抵金額或保證可兌換。
 """.strip()
         payload = {
             "preference_summary": {
@@ -228,6 +232,9 @@ class GeneratorAgent:
                 "preferred_category": features.preferred_category,
                 "preferred_body_area": features.preferred_body_area,
                 "brands_used": features.brand_count,
+                "recent_brand": recent_brand,
+                "days_since_last_visit": features.days_since_last_visit,
+                "preference_tags": features.health_tags,
             },
             "eligible_options": [
                 {"brand": item.brand, "treatment": item.treatment}

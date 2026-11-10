@@ -19,6 +19,9 @@ from linebot.v3.messaging import (
     PushMessageRequest,
     ReplyMessageRequest,
     PostbackAction,
+    MessageAction,
+    QuickReply,
+    QuickReplyItem,
     TemplateMessage,
     TextMessage,
 )
@@ -64,8 +67,16 @@ CONVERSATION_FALLBACK_MESSAGE = (
     "也可以輸入「推薦」重新取得一則服務推薦。"
 )
 STATIC_REPLY_MESSAGES = {
-    "我的預約": "✅ 已收到您的預約查詢。服務人員會依門店與時段協助確認；確認前不代表預約成立。",
-    "查詢點數": "⭐ 正在為您整理可用點數與活動資訊，實際折抵方式以服務人員確認為準。",
+    "我的預約": "【預約服務】\n如需查詢已安排的預約，請向原預約門店確認。若想預約推薦服務，可以點選推薦卡片上的「立即預約諮詢」。",
+    "查詢點數": "【會員點數】\n目前無法顯示點數餘額。您可以稍後再試，或向門店服務人員確認點數與折抵方式。",
+    "服務選單": "您好，這裡是康博服務管家。請點選下方選項，我們會協助您查詢點數、了解預約方式，或申請專屬推薦。",
+    "使用說明": (
+        "【康博服務選單｜使用說明】\n\n"
+        "您好！以下是三個服務按鈕的用途，請選擇您需要的服務。\n\n"
+        "專屬推薦：依您的服務偏好整理建議，經服務人員確認後，由 LINE 通知您。\n\n"
+        "我的預約：了解如何向門店確認已安排的預約，或提出預約諮詢。\n\n"
+        "查看點數：查詢目前可用的會員點數，折抵方式依活動規則為準。"
+    ),
 }
 LINE_HEALTH_DISCLAIMER = "※ 此為一般健康建議，非醫療診斷，不具宣稱療效。"
 # LINE ButtonsTemplate 的 text 欄位最多只能有 60 個字元。
@@ -115,6 +126,7 @@ async def health_check() -> dict[str, str | bool]:
         "status": "ok",
         "service": "combo-recommendation-agent",
         "line_ui_mode": "static-keywords-and-postback-cards",
+        "line_help_enabled": True,
         "agent_mode": settings.agent_mode,
         "gemini_configured": bool(settings.gemini_api_key),
         "line_configured": bool(
@@ -157,7 +169,16 @@ def _reply_to_line(
         MessagingApi(api_client).reply_message(
             ReplyMessageRequest(
                 reply_token=reply_token,
-                messages=[_as_line_message(message)],
+                messages=[
+                    TextMessage(
+                        text=message,
+                        quick_reply=QuickReply(items=[
+                            QuickReplyItem(action=MessageAction(label="專屬推薦", text="專屬推薦")),
+                            QuickReplyItem(action=MessageAction(label="我的預約", text="我的預約")),
+                            QuickReplyItem(action=PostbackAction(label="查看點數", data="action=points", display_text="查詢點數")),
+                        ]),
+                    ) if isinstance(message, str) else message
+                ],
             )
         )
 
@@ -230,10 +251,14 @@ def build_recommendation_messages(
 def static_reply_for_text(user_text: str) -> str | None:
     """官方帳號常見查詢的關鍵字分流；命中後絕不進 Gemini。"""
 
+    if user_text == "使用說明":
+        return STATIC_REPLY_MESSAGES["使用說明"]
+    if user_text in {"服務選單", "選單", "你好", "您好"}:
+        return STATIC_REPLY_MESSAGES["服務選單"]
     if "我的預約" in user_text or "預約查詢" in user_text:
         return STATIC_REPLY_MESSAGES["我的預約"]
     if "查詢點數" in user_text or user_text == "點數":
-        return STATIC_REPLY_MESSAGES["查詢點數"]
+        return "【會員點數】\n請點選下方的「查看點數」查詢可用餘額。"
     return None
 
 
@@ -357,7 +382,9 @@ async def line_callback(request: Request) -> dict[str, str]:
     for event in postback_events:
         user_id = resolve_customer_id(event)
         action = dict(parse_qsl(event.postback.data)).get("action")
-        if action == "booking":
+        if action == "help":
+            reply_message = STATIC_REPLY_MESSAGES["使用說明"]
+        elif action == "booking":
             try:
                 profile = await _backend_request("GET", f"/api/agent/customers/{user_id}")
                 suggestion = await _backend_request(
@@ -375,7 +402,7 @@ async def line_callback(request: Request) -> dict[str, str]:
                 reply_message = "✅ 已收到您的預約諮詢意願，服務人員將協助確認可安排時段。"
             except Exception:
                 logger.exception("LINE 預約按鈕回寫管理後台失敗。")
-                reply_message = "✅ 已收到您的預約諮詢意願，服務人員會再與您確認安排。"
+                reply_message = "【預約諮詢】\n目前無法登記您的諮詢需求，請稍後再試，或直接聯繫門店服務人員。"
         elif action == "points":
             try:
                 profile = await _backend_request("GET", f"/api/agent/customers/{user_id}")
@@ -454,8 +481,8 @@ async def line_callback(request: Request) -> dict[str, str]:
                         },
                     )
                     reply_message = (
-                        "已為您整理一份專屬服務建議，正在由服務人員確認內容；"
-                        "確認後會以推薦卡片通知您。若想了解一般服務資訊，也可以直接問我。"
+                        "【專屬推薦｜審核中】\n已將您的專屬服務建議送交服務人員確認。"
+                        "確認後，我們會在這裡提供完整建議及可選擇的下一步。"
                     )
                 else:
                     reply_message = recommendation.final_push_message

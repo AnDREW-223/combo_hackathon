@@ -42,7 +42,7 @@ interface Store {
   openMember: string | null
   setOpenMember: (id: string | null) => void
   suggestions: Suggestion[]
-  setStatus: (id: string, s: SugStatus) => void
+  setStatus: (id: string, s: SugStatus) => Promise<boolean>
   editDraft: (id: string, d: string) => void
   addSuggestion: (s: Suggestion) => void
   audit: Audit[]
@@ -107,33 +107,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const setStatus = useCallback(
-    (id: string, s: SugStatus) => {
+    async (id: string, s: SugStatus) => {
       const original = suggestions.find((x) => x.id === id)
-      setSugs((list) => list.map((x) => (x.id === id ? { ...x, status: s } : x)))
       const endpoint = s === 'approved'
         ? `/api/suggestions/${id}/approve`
         : s === 'sent'
           ? `/api/suggestions/${id}/mark-sent`
           : null
       if (endpoint) {
-        void fetch(`${backendUrl}${endpoint}`, { method: 'POST' })
-          .then(async (response) => {
-            if (!response.ok) throw new Error(await response.text())
-            return response.json() as Promise<Suggestion>
-          })
-          .then((saved) => setSugs((list) => list.map((item) => (item.id === id ? saved : item))))
-          .catch(() => {
-            if (original) setSugs((list) => list.map((item) => (item.id === id ? original : item)))
-            toast(
-              s === 'sent'
-                ? 'LINE 推送未完成，請確認 Agent 與 LINE 設定後再試'
-                : '後端未完成狀態更新，請稍後再試',
-              'warn',
-            )
-          })
+        try {
+          const response = await fetch(`${backendUrl}${endpoint}`, { method: 'POST' })
+          if (!response.ok) {
+            const error = await response.json().catch(() => null)
+            toast(typeof error?.detail === 'string' ? error.detail : `操作失敗（HTTP ${response.status}）`, 'warn')
+            return false
+          }
+          const saved: Suggestion = await response.json()
+          setSugs((list) => list.map((item) => (item.id === id ? saved : item)))
+          return true
+        } catch {
+          toast('無法連線或讀取後端回應，請重新整理後再試', 'warn')
+          return false
+        }
       }
+      setSugs((list) => list.map((x) => (x.id === id ? { ...x, status: s } : x)))
       if (s === 'booked') {
-        const sug = suggestions.find((x) => x.id === id)
+        const sug = original
         const m = MEMBERS.find((m) => m.id === sug?.memberId)
         if (sug && m)
           setExtra((e) => [
@@ -141,6 +140,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             ...e,
           ])
       }
+      return true
     },
     [suggestions, toast],
   )

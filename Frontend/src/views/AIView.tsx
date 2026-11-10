@@ -129,10 +129,10 @@ export default function AIView() {
 
             <div className="flex flex-wrap gap-3">
               {sel.status === 'pending' && (
-                <motion.button whileTap={{ scale: 0.96 }} disabled={issues.length > 0} onClick={() => { setStatus(sel.id, 'approved'); addAudit(`核可 ${member.name} 建議`); toast('已核可,可推送至 LINE') ; setTab('approved'); setSelId(sel.id) }} className="flex h-14 items-center gap-2 rounded-xl bg-brand px-8 font-bold text-white disabled:opacity-40"><Check />人員核可</motion.button>
+                <motion.button whileTap={{ scale: 0.96 }} disabled={issues.length > 0} onClick={async () => { if (!(await setStatus(sel.id, 'approved'))) return; addAudit(`核可 ${member.name} 建議`); toast('已核可,可推送至 LINE') ; setTab('approved'); setSelId(sel.id) }} className="flex h-14 items-center gap-2 rounded-xl bg-brand px-8 font-bold text-white disabled:opacity-40"><Check />人員核可</motion.button>
               )}
               {sel.status === 'approved' && (
-                <motion.button whileTap={{ scale: 0.96 }} disabled={!member.consent} onClick={() => { setStatus(sel.id, 'sent'); addAudit(`推送 LINE 給 ${member.name}`); toast('已透過 LINE 推送'); setTab('sent') }} className="flex h-14 items-center gap-2 rounded-xl bg-[#06c755] px-8 font-bold text-white disabled:opacity-40"><Send />推送到 LINE</motion.button>
+                <motion.button whileTap={{ scale: 0.96 }} disabled={!member.consent} onClick={async () => { if (!(await setStatus(sel.id, 'sent'))) return; addAudit(`推送 LINE 給 ${member.name}`); toast('已透過 LINE 推送'); setTab('sent') }} className="flex h-14 items-center gap-2 rounded-xl bg-[#06c755] px-8 font-bold text-white disabled:opacity-40"><Send />推送到 LINE</motion.button>
               )}
               {sel.status === 'approved' && !member.consent && <span className="self-center text-sm font-semibold text-crimson">會員未同意推播,無法發送</span>}
               {sel.status === 'sent' && (
