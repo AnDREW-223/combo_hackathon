@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, MessageSquareText, Send, ShieldAlert, ShieldCheck, Snowflake, Wand2 } from 'lucide-react'
+import { Check, Clock, Gift, HeartHandshake, Lock, MessageSquareText, ScanSearch, Send, ShieldAlert, ShieldCheck, Snowflake, Wand2 } from 'lucide-react'
 import { Fragment, useState } from 'react'
-import { BANNED, BRANDS, MEMBERS, type BrandId, type SugStatus } from '../data'
+import { BANNED, BRANDS, MEMBERS, POINTS, type BrandId, type SugStatus } from '../data'
+import { TIMING_OPTIONS, bestTiming, scan, toneCheck, warmRewrite } from '../smart'
 import { useStore } from '../store'
 import { BrandTag, Bubble, Card, Pill, ease } from '../ui'
 
@@ -21,13 +22,23 @@ export function findIssues(text: string, to: BrandId) {
 }
 
 export default function AIView() {
-  const { suggestions, setStatus, editDraft, toast, addAudit } = useStore()
+  const { suggestions, setStatus, editDraft, toast, addAudit, addSuggestion, patchSug } = useStore()
   const [tab, setTab] = useState<SugStatus>('pending')
   const [selId, setSelId] = useState<string | null>(null)
   const list = suggestions.filter((s) => s.status === tab)
   const sel = suggestions.find((s) => s.id === selId) ?? list[0]
   const member = MEMBERS.find((m) => m.id === sel?.memberId)
   const issues = sel ? findIssues(sel.draft, sel.to) : []
+  const timing = member ? bestTiming(member, suggestions) : null
+  const tone = sel ? toneCheck(sel.draft) : null
+  const reward = sel?.reward ?? { on: false, pts: 200 }
+  const runScan = () => {
+    const { made, skipped } = scan(suggestions)
+    made.forEach(addSuggestion)
+    addAudit(`AI 掃描:產生 ${made.length} 則待審建議,略過 ${skipped.length} 位`)
+    if (made.length) { setTab('pending'); setSelId(made[0].id) }
+    toast(made.length ? `已產生 ${made.length} 則待審建議;${skipped.length} 位因合規/關懷規則略過` : `沒有新的合適時機;${skipped.length} 位因合規/關懷規則略過`, made.length ? 'ok' : 'warn')
+  }
 
   const highlight = (t: string, words: string[]) => {
     if (!words.length) return t
@@ -38,6 +49,9 @@ export default function AIView() {
   return (
     <div className="mx-auto grid max-w-[1500px] gap-5 xl:grid-cols-[360px_1fr]">
       <div>
+        <motion.button whileTap={{ scale: 0.97 }} onClick={runScan} className="mb-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-brand/40 bg-white text-sm font-bold text-brand hover:bg-brand-soft">
+          <ScanSearch className="size-4" />AI 掃描最佳推薦時機
+        </motion.button>
         <Card className="!p-3">
           <div className="relative grid grid-cols-4 gap-1">
             {TABS.map((t) => {
@@ -127,12 +141,56 @@ export default function AIView() {
               </AnimatePresence>
             </Card>
 
+            {timing && tone && (
+              <Card delay={0.12}>
+                <div className="mb-4 flex items-center gap-2 text-sm font-bold text-brand"><HeartHandshake className="size-4" />推播時機與關懷溫度</div>
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div>
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-ink-soft"><Clock className="size-3.5" />建議送出時機</div>
+                    <select value={sel.sendAt ?? timing.label} disabled={sel.status !== 'pending'} onChange={(e) => patchSug(sel.id, { sendAt: e.target.value })} className="h-11 w-full rounded-xl bg-canvas px-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-brand disabled:opacity-70">
+                      {[...new Set([timing.label, ...TIMING_OPTIONS])].map((o) => <option key={o}>{o}</option>)}
+                    </select>
+                    <p className="mt-2 text-xs leading-relaxed text-ink-soft">{timing.reason}</p>
+                    {timing.hold && <div className="mt-2 rounded-xl bg-[#f5e2b8] px-3 py-2 text-xs font-semibold text-[#7a5a10]">暫緩提醒:{timing.hold}</div>}
+                    <p className="mt-2 text-[11px] text-ink-soft">不打擾規則:夜間 21:00 後不推送、同一會員 14 天最多 1 則、回診後 3 日內不推跨品牌。</p>
+                  </div>
+                  <div>
+                    <div className="mb-2 flex items-center justify-between text-xs font-bold text-ink-soft"><span>溫暖度檢查(柔性提醒)</span><span className="num text-brand">{tone.score}/{tone.total}</span></div>
+                    <div className="mb-3 h-2 overflow-hidden rounded-full bg-canvas"><motion.div initial={false} animate={{ width: `${(tone.score / tone.total) * 100}%` }} className="h-full rounded-full bg-brand" /></div>
+                    <ul className="space-y-1.5">
+                      {tone.checks.map((c) => <li key={c.t} className={`flex items-center gap-2 text-xs ${c.ok ? 'text-teal-800' : 'text-ink-soft'}`}><span className={`grid size-4 place-items-center rounded-full ${c.ok ? 'bg-teal-700 text-white' : 'bg-line'}`}>{c.ok && <Check className="size-3" />}</span>{c.t}</li>)}
+                    </ul>
+                    {tone.pressure.length > 0 && <p className="mt-2 text-xs font-semibold text-crimson">偵測到催促語氣:{tone.pressure.join('、')}</p>}
+                    {sel.status === 'pending' && tone.score < tone.total && (
+                      <motion.button whileTap={{ scale: 0.95 }} onClick={() => { editDraft(sel.id, warmRewrite(sel.draft)); addAudit('套用溫暖語氣改寫'); toast('已調整為更溫和的語氣') }} className="mt-3 flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-xs font-bold text-white"><HeartHandshake className="size-3.5" />溫暖語氣調整</motion.button>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-5 border-t border-line/70 pt-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-ink-soft"><Gift className="size-3.5" />感謝轉介點數(企業點數)</div>
+                    <span className="text-xs text-ink-soft">{member.name} 目前 <b className="num text-brand">{POINTS[member.id] ?? 0}</b> 點</span>
+                  </div>
+                  {sel.to === 'kang' ? (
+                    <div className="flex items-start gap-2 rounded-xl bg-sky px-3 py-2.5 text-xs leading-relaxed text-clinic"><Lock className="mt-0.5 size-3.5 shrink-0" />推薦對象為診所時不提供點數誘因,以避免以優惠招攬就醫(醫療法相關規範,請法遵確認)。</div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button disabled={sel.status !== 'pending'} onClick={() => patchSug(sel.id, { reward: { ...reward, on: !reward.on } })} className={`relative h-7 w-12 rounded-full transition-colors disabled:opacity-60 ${reward.on ? 'bg-brand' : 'bg-line'}`} aria-label="切換點數回饋"><motion.span layout transition={{ type: 'spring', stiffness: 500, damping: 32 }} className={`absolute top-1 size-5 rounded-full bg-white shadow ${reward.on ? 'right-1' : 'left-1'}`} /></button>
+                      <span className="text-sm font-semibold">{reward.on ? '邀請好友一起體驗,雙方各得' : '不附點數回饋'}</span>
+                      {reward.on && [100, 200, 300].map((n) => <button key={n} disabled={sel.status !== 'pending'} onClick={() => patchSug(sel.id, { reward: { on: true, pts: n } })} className={`num rounded-full px-3 py-1 text-xs font-bold ${reward.pts === n ? 'bg-brand text-white' : 'bg-canvas text-ink-soft'}`}>{n} 點</button>)}
+                    </div>
+                  )}
+                  <p className="mt-2 text-[11px] text-ink-soft">點數是「謝謝你把好東西分享給朋友」的心意,不是促銷壓力;僅在會員主動介紹且好友完成體驗後入帳,可折抵非醫療服務。</p>
+                </div>
+              </Card>
+            )}
+
             <div className="flex flex-wrap gap-3">
               {sel.status === 'pending' && (
                 <motion.button whileTap={{ scale: 0.96 }} disabled={issues.length > 0} onClick={async () => { if (!(await setStatus(sel.id, 'approved'))) return; addAudit(`核可 ${member.name} 建議`); toast('已核可,可推送至 LINE') ; setTab('approved'); setSelId(sel.id) }} className="flex h-14 items-center gap-2 rounded-xl bg-brand px-8 font-bold text-white disabled:opacity-40"><Check />人員核可</motion.button>
               )}
               {sel.status === 'approved' && (
-                <motion.button whileTap={{ scale: 0.96 }} disabled={!member.consent} onClick={async () => { if (!(await setStatus(sel.id, 'sent'))) return; addAudit(`推送 LINE 給 ${member.name}`); toast('已透過 LINE 推送'); setTab('sent') }} className="flex h-14 items-center gap-2 rounded-xl bg-[#06c755] px-8 font-bold text-white disabled:opacity-40"><Send />推送到 LINE</motion.button>
+                <motion.button whileTap={{ scale: 0.96 }} disabled={!member.consent} onClick={async () => { if (!(await setStatus(sel.id, 'sent'))) return; addAudit(`推送 LINE 給 ${member.name}`); toast(`已排程 LINE 推送:${sel.sendAt ?? timing?.label ?? '立即'}`); setTab('sent') }} className="flex h-14 items-center gap-2 rounded-xl bg-[#06c755] px-8 font-bold text-white disabled:opacity-40"><Send />推送到 LINE</motion.button>
               )}
               {sel.status === 'approved' && !member.consent && <span className="self-center text-sm font-semibold text-crimson">會員未同意推播,無法發送</span>}
               {sel.status === 'sent' && (
@@ -143,7 +201,7 @@ export default function AIView() {
           </div>
           <Card delay={0.15} className="h-fit 2xl:sticky 2xl:top-0">
             <div className="mb-3 text-sm font-bold text-brand">會員端 LINE 預覽</div>
-            <Bubble text={sel.draft} from={BRANDS[sel.to].name} />
+            <Bubble text={sel.draft + (reward.on && sel.to !== 'kang' ? `\n\n小心意:若您邀請好友一起體驗,雙方各得 ${reward.pts} 點。` : '')} from={BRANDS[sel.to].name} />
           </Card>
         </motion.div>
       ) : (

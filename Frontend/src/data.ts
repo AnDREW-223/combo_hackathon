@@ -188,6 +188,120 @@ export const MEMBERS: Member[] = [
     consent: false,
     needs: [],
   },
+  {
+    id: 'm7',
+    name: '林○芬',
+    band: '45–54',
+    brands: ['tai'],
+    tags: ['單品牌', '冷啟動'],
+    lastVisit: { tai: '10/21' },
+    cycleDays: 21,
+    nextDue: '11/11',
+    fatigue: [
+      { part: '肩頸', lv: 2 },
+      { part: '腰臀', lv: 1 },
+    ],
+    pressure: '輕',
+    skin: [],
+    clinic: [],
+    signals: [58, 40, 0, 0],
+    cluster: 'C2',
+    consent: true,
+    needs: [],
+  },
+  {
+    id: 'm8',
+    name: '許○睿',
+    band: '28–37',
+    brands: ['tai', 'mei'],
+    tags: ['雙品牌', '高頻'],
+    lastVisit: { tai: '10/24', mei: '10/12' },
+    cycleDays: 14,
+    nextDue: '11/07',
+    fatigue: [{ part: '上背', lv: 1 }],
+    pressure: '中',
+    skin: ['光電保養 10/12'],
+    clinic: [],
+    signals: [72, 52, 70, 0],
+    cluster: 'C1',
+    consent: true,
+    needs: [],
+  },
+  {
+    id: 'm9',
+    name: '陳○珊',
+    band: '35–44',
+    brands: ['mei', 'kang'],
+    tags: ['雙品牌'],
+    lastVisit: { mei: '10/14', kang: '10/08' },
+    cycleDays: 21,
+    nextDue: '11/04',
+    fatigue: [],
+    pressure: null,
+    skin: ['保濕療程 10/14', '膚質檢測 09/02'],
+    clinic: [{ item: '體重管理方案', status: '方案進行中' }],
+    signals: [50, 0, 72, 64],
+    cluster: 'C3',
+    consent: true,
+    needs: ['日常放鬆時間(群集推估)'],
+  },
+  {
+    id: 'm10',
+    name: '劉○賢',
+    band: '55–64',
+    brands: ['kang'],
+    tags: ['單品牌', '冷啟動'],
+    lastVisit: { kang: '10/15' },
+    cycleDays: 30,
+    nextDue: '11/14',
+    fatigue: [],
+    pressure: null,
+    skin: [],
+    clinic: [{ item: '追蹤回診', status: '已預約' }],
+    signals: [30, 0, 0, 80],
+    cluster: 'C4',
+    consent: false,
+    needs: [],
+  },
+  {
+    id: 'm11',
+    name: '楊○晴',
+    band: '25–34',
+    brands: ['tai'],
+    tags: ['單品牌', '冷啟動', '高頻'],
+    lastVisit: { tai: '10/25' },
+    cycleDays: 14,
+    nextDue: '11/08',
+    fatigue: [
+      { part: '肩頸', lv: 3 },
+      { part: '小腿', lv: 2 },
+    ],
+    pressure: '中',
+    skin: [],
+    clinic: [],
+    signals: [78, 60, 0, 0],
+    cluster: 'C2',
+    consent: true,
+    needs: [],
+  },
+  {
+    id: 'm12',
+    name: '趙○倫',
+    band: '40–49',
+    brands: ['tai', 'kang'],
+    tags: ['雙品牌'],
+    lastVisit: { tai: '10/10', kang: '10/27' },
+    cycleDays: 28,
+    nextDue: '11/07',
+    fatigue: [{ part: '下背', lv: 2 }],
+    pressure: '重',
+    skin: [],
+    clinic: [{ item: '功能醫學諮詢', status: '追蹤中' }],
+    signals: [52, 44, 0, 70],
+    cluster: 'C2',
+    consent: true,
+    needs: [],
+  },
 ]
 
 export const CLUSTERS: Record<string, { name: string; desc: string; color: string; x: number; y: number }> = {
@@ -223,6 +337,10 @@ export interface Suggestion {
   conf: number
   cold: boolean
   status: SugStatus
+  /** 排定推播時機(人員可調整) */
+  sendAt?: string
+  /** 企業點數轉介回饋(僅非醫療品牌) */
+  reward?: { on: boolean; pts: number }
 }
 
 export const SUGGESTIONS: Suggestion[] = [
@@ -274,6 +392,34 @@ export const SUGGESTIONS: Suggestion[] = [
     cold: true,
     status: 'sent',
   },
+  {
+    id: 's5',
+    memberId: 'm11',
+    from: 'tai',
+    to: 'mei',
+    title: '保養初體驗邀請',
+    draft: '楊小姐您好,謝謝您常來泰晶殿。工作辛苦了,若也想為自己留一點保養的時間,美加為您準備了初次膚質聊聊,不用做任何決定,輕鬆來坐坐就好。若暫時不需要,回覆「先不用」,我們就不再提醒。',
+    why: ['僅有泰晶殿單一品牌紀錄', '到訪週期穩定,約 14 天一次', '依群集 C2 推估(假設),信心偏低'],
+    conf: 56,
+    cold: true,
+    status: 'pending',
+    sendAt: '平日 20:00 晚間放鬆時段',
+    reward: { on: true, pts: 200 },
+  },
+  {
+    id: 's6',
+    memberId: 'm9',
+    from: 'mei',
+    to: 'tai',
+    title: '日常放鬆時光邀請',
+    draft: '陳小姐您好,感謝您一直以來的信任。保養與健康管理都很用心,也別忘了留點時間照顧自己的心情。泰晶殿有安靜的放鬆時段,有空再看看就好。回覆「先不用」即可停止提醒。',
+    why: ['美加 + 康博 雙品牌,皆規律到訪', '尚無泰晶殿紀錄,依群集 C3 推估(假設)', '僅使用「有進行中方案」摘要,未使用任何檢測數值'],
+    conf: 61,
+    cold: false,
+    status: 'pending',
+    sendAt: '平日 12:10 午休時段',
+    reward: { on: false, pts: 200 },
+  },
 ]
 
 export interface Appt {
@@ -308,4 +454,43 @@ export const APPTS: Record<BrandId | 'hq', Appt[]> = {
     { time: '13:00', member: '黃○雯', brand: 'mei', svc: '體態評估', src: 'LINE 預約' },
     { time: '14:00', member: '蔡○妤', brand: 'tai', svc: '香氛舒壓 60 分' },
   ],
+}
+
+// ───────── 以下為「預約紀錄 / 點數 / 稱謂」資料 ─────────
+export type BookingStatus = '已完成' | '已預約' | '已取消' | '未到'
+export interface Booking {
+  date: string // MM/DD
+  time: string // HH:MM
+  brand: BrandId
+  svc: string
+  status: BookingStatus
+  src: 'LINE' | '現場' | '電話' | 'AI 建議'
+}
+
+export const TITLE: Record<string, '小姐' | '先生'> = {
+  m1: '小姐', m2: '先生', m3: '小姐', m4: '先生', m5: '小姐', m6: '先生',
+  m7: '小姐', m8: '先生', m9: '小姐', m10: '先生', m11: '小姐', m12: '先生',
+}
+
+/** 企業點數(HCLife 集團通用,可跨品牌折抵非醫療服務) */
+export const POINTS: Record<string, number> = {
+  m1: 420, m2: 180, m3: 90, m4: 60, m5: 1260, m6: 0,
+  m7: 150, m8: 380, m9: 310, m10: 40, m11: 220, m12: 130,
+}
+
+const b = (date: string, time: string, brand: BrandId, svc: string, status: BookingStatus, src: Booking['src']): Booking => ({ date, time, brand, svc, status, src })
+
+export const BOOKINGS: Record<string, Booking[]> = {
+  m1: [b('11/01', '10:00', 'tai', '肩頸舒壓 60 分', '已預約', 'LINE'), b('10/18', '10:00', 'tai', '肩頸舒壓 60 分', '已完成', 'LINE'), b('10/04', '10:30', 'tai', '肩頸舒壓 60 分', '已完成', '現場'), b('09/30', '14:00', 'mei', '保濕保養', '已完成', '電話'), b('08/12', '14:00', 'mei', '光電諮詢', '已完成', '現場')],
+  m2: [b('11/10', '16:30', 'tai', '下背舒壓 60 分', '已預約', 'AI 建議'), b('10/20', '18:00', 'tai', '下背舒壓 60 分', '已完成', 'LINE'), b('09/29', '18:30', 'tai', '下背舒壓 60 分', '已取消', 'LINE'), b('09/14', '11:00', 'kang', '功能醫學回診', '已完成', '現場')],
+  m3: [b('11/02', '10:30', 'mei', '保養療程諮詢', '已預約', 'LINE'), b('10/05', '10:30', 'mei', '雷射後保養', '已完成', '現場'), b('09/07', '10:30', 'mei', '膚質檢測', '已完成', '現場')],
+  m4: [b('11/10', '09:30', 'kang', '追蹤回診', '已預約', '電話'), b('10/11', '09:30', 'kang', '生理檢測', '已完成', '現場')],
+  m5: [b('11/01', '14:00', 'tai', '香氛舒壓 60 分', '已預約', 'LINE'), b('10/22', '14:00', 'tai', '香氛舒壓 60 分', '已完成', 'LINE'), b('10/09', '15:30', 'mei', '保養療程', '已完成', 'LINE'), b('10/01', '14:30', 'kang', '健康管理諮詢', '已完成', '現場'), b('09/20', '14:00', 'tai', '香氛舒壓 60 分', '已完成', 'LINE')],
+  m6: [b('11/15', '11:30', 'tai', '全身放鬆 90 分', '已預約', '電話'), b('10/16', '11:30', 'tai', '全身放鬆 90 分', '已完成', '現場')],
+  m7: [b('11/11', '15:00', 'tai', '肩頸舒壓 60 分', '已預約', '現場'), b('10/21', '15:00', 'tai', '肩頸舒壓 60 分', '已完成', '現場'), b('09/30', '15:00', 'tai', '全身放鬆 60 分', '已完成', '現場')],
+  m8: [b('11/07', '19:00', 'tai', '上背舒壓 60 分', '已預約', 'LINE'), b('10/24', '19:00', 'tai', '上背舒壓 60 分', '已完成', 'LINE'), b('10/12', '12:30', 'mei', '光電保養', '已完成', 'LINE'), b('10/10', '19:00', 'tai', '上背舒壓 60 分', '未到', 'LINE')],
+  m9: [b('11/04', '13:00', 'mei', '保濕療程', '已預約', 'LINE'), b('10/14', '13:00', 'mei', '保濕療程', '已完成', 'LINE'), b('10/08', '10:00', 'kang', '體重管理回診', '已完成', '現場'), b('09/02', '13:00', 'mei', '膚質檢測', '已完成', '現場')],
+  m10: [b('11/14', '09:00', 'kang', '追蹤回診', '已預約', '電話'), b('10/15', '09:00', 'kang', '追蹤回診', '已完成', '現場')],
+  m11: [b('11/08', '19:30', 'tai', '肩頸舒壓 60 分', '已預約', 'LINE'), b('10/25', '19:30', 'tai', '肩頸舒壓 60 分', '已完成', 'LINE'), b('10/11', '19:30', 'tai', '肩頸舒壓 60 分', '已完成', 'LINE'), b('09/27', '19:30', 'tai', '小腿放鬆 45 分', '已完成', 'LINE')],
+  m12: [b('11/07', '10:30', 'kang', '功能醫學回診', '已預約', '電話'), b('10/27', '10:30', 'kang', '功能醫學回診', '已完成', '現場'), b('10/10', '17:30', 'tai', '下背舒壓 60 分', '已完成', 'LINE')],
 }

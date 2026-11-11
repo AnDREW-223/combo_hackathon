@@ -45,6 +45,7 @@ interface Store {
   setStatus: (id: string, s: SugStatus) => Promise<boolean>
   editDraft: (id: string, d: string) => void
   addSuggestion: (s: Suggestion) => void
+  patchSug: (id: string, p: Partial<Suggestion>) => void
   audit: Audit[]
   addAudit: (act: string, lv?: 1 | 2 | 3) => void
   toast: (msg: string, kind?: 'ok' | 'warn') => void
@@ -177,6 +178,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setStatus,
     editDraft: (id, d) => setSugs((l) => l.map((x) => (x.id === id ? { ...x, draft: d } : x))),
     addSuggestion: (s) => setSugs((l) => [s, ...l]),
+    patchSug: (id, p) => setSugs((l) => l.map((x) => (x.id === id ? { ...x, ...p } : x))),
     audit,
     addAudit,
     toast,

@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { BellOff, CalendarClock, Lock, MessageCircleHeart, Search, ShieldAlert, Snowflake, X } from 'lucide-react'
+import { BellOff, CalendarClock, CalendarCheck2, Coins, Lock, Sparkles, MessageCircleHeart, Search, ShieldAlert, Snowflake, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { BRANDS, CLUSTERS, MEMBERS, type BrandId, type Member } from '../data'
+import { BOOKINGS, BRANDS, CLUSTERS, MEMBERS, POINTS, type BrandId, type Member } from '../data'
+import { autoTags, bestTiming, predict } from '../smart'
 import { useStore } from '../store'
 import { Avatar, BrandTag, Card, Pill, Radar, ease } from '../ui'
 
@@ -221,6 +222,9 @@ function Detail({ m }: { m: Member }) {
         </motion.div>
       </AnimatePresence>
 
+      <BookingSection m={m} can={can} />
+      <SmartSection m={m} />
+
       <div className="mt-6">
         <div className="mb-2 text-sm font-bold text-brand">相關 AI 建議</div>
         {mySug.length ? mySug.map((s) => (
@@ -239,6 +243,75 @@ function Row({ label, value, locked }: { label: string; value: string; locked?: 
     <div className="flex items-start justify-between gap-4 border-b border-line/70 pb-3 text-sm last:border-0">
       <span className="shrink-0 text-ink-soft">{label}</span>
       <span className="flex items-center gap-1.5 text-right font-semibold">{locked && <Lock className="size-3.5 text-brand" />}{value}</span>
+    </div>
+  )
+}
+
+const STATUS_TONE = { 已完成: 'teal', 已預約: 'blue', 已取消: 'gray', 未到: 'amber' } as const
+
+function BookingSection({ m, can }: { m: Member; can: (b: BrandId) => boolean }) {
+  const list = BOOKINGS[m.id] ?? []
+  const upcoming = list.filter((x) => x.status === '已預約')
+  const past = list.filter((x) => x.status !== '已預約')
+  const item = (x: (typeof list)[number], i: number) => {
+    const open = can(x.brand)
+    return (
+      <motion.li key={x.date + x.time + x.brand} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05, ease }} className="relative flex items-start gap-3 pb-3 pl-5 last:pb-0">
+        <i className="absolute left-0 top-1.5 size-2.5 rounded-full" style={{ background: BRANDS[x.brand].color }} />
+        <div className="flex-1">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+            <span className="num">{x.date} {x.time}</span><BrandTag id={x.brand} small />
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-soft">
+            {open ? x.svc : <><Lock className="size-3" />預約明細受控(僅顯示品牌與時間)</>} · {x.src}
+          </div>
+        </div>
+        <Pill tone={STATUS_TONE[x.status]}>{x.status}</Pill>
+      </motion.li>
+    )
+  }
+  return (
+    <div className="mt-6">
+      <div className="mb-3 flex items-center gap-2 text-sm font-bold text-brand"><CalendarCheck2 className="size-4" />預約紀錄<span className="num text-xs font-medium text-ink-soft">共 {list.length} 筆</span></div>
+      {upcoming.length > 0 && (
+        <div className="mb-3 rounded-xl bg-teal-50 p-3">
+          <div className="mb-2 text-[11px] font-bold text-teal-800">即將到來</div>
+          <ul className="border-l border-teal-700/20">{upcoming.map(item)}</ul>
+        </div>
+      )}
+      {past.length ? <ul className="border-l border-line">{past.map(item)}</ul> : <div className="text-xs text-ink-soft">尚無歷史預約</div>}
+    </div>
+  )
+}
+
+function SmartSection({ m }: { m: Member }) {
+  const { suggestions } = useStore()
+  const tags = autoTags(m)
+  const p = predict(m)
+  const t = bestTiming(m, suggestions)
+  return (
+    <div className="mt-6 rounded-2xl bg-canvas p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-bold text-brand"><Sparkles className="size-4" />智慧標籤與需求預測</div>
+        <span className="flex items-center gap-1 text-xs text-ink-soft"><Coins className="size-3.5 text-brand" /><b className="num text-brand">{POINTS[m.id] ?? 0}</b> 點</span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {tags.map((x, i) => (
+          <motion.span key={x.tag} title={`依據:${x.basis}`} initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.04 }} className="cursor-help rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-teal-800 ring-1 ring-teal-700/15">{x.tag}</motion.span>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[10px] text-ink-soft">標籤由系統依資料自動產生,滑過可看依據;僅供服務參考,不作為評價會員之用。</p>
+      <div className="mt-4 border-t border-line/70 pt-3 text-xs">
+        {p ? (
+          <>
+            <div className="flex items-center justify-between"><b>下一步可能適合:{BRANDS[p.to].name}</b><span className="num font-bold text-brand">{p.prob}%(示意)</span></div>
+            <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-white"><motion.div initial={{ width: 0 }} animate={{ width: `${p.prob}%` }} transition={{ duration: 0.8, ease }} className="h-full rounded-full bg-brand" /></div>
+            <ul className="mt-2 space-y-1 text-ink-soft">{p.reasons.map((r) => <li key={r}>· {r}</li>)}</ul>
+          </>
+        ) : <div className="text-ink-soft">已體驗三個品牌,不再做交叉推薦;建議以感謝與關心為主。</div>}
+        <div className="mt-2 rounded-lg bg-white px-3 py-2">最佳關心時機:<b>{t.label}</b>{t.hold ? <span className="text-[#7a5a10]"> · 暫緩:{t.hold}</span> : null}</div>
+        {!m.consent && <div className="mt-2 font-semibold text-crimson">尚未同意推播,僅供現場口頭詢問,不會產生 LINE 建議。</div>}
+      </div>
     </div>
   )
 }
