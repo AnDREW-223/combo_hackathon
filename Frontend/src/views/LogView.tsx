@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, History, ShieldCheck, TriangleAlert, Zap } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, History, ShieldCheck, TriangleAlert, Zap } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BRANDS, MEMBERS, type BrandId } from '../data'
 import { useStore } from '../store'
@@ -45,10 +45,29 @@ export default function LogView() {
   const [phase, setPhase] = useState<'form' | 'ai'>('form')
   const [done, setDone] = useState<number>(0)
   const tick = useRef<ReturnType<typeof setInterval>>(undefined)
+  const memberListRef = useRef<HTMLDivElement>(null)
+  const [memberScroll, setMemberScroll] = useState({ left: false, right: false })
 
   const start = () => {
     if (t0 === null) setT0(Date.now())
   }
+  useEffect(() => {
+    const list = memberListRef.current
+    if (!list) return
+    const updateScrollButtons = () => {
+      setMemberScroll({
+        left: list.scrollLeft > 0,
+        right: list.scrollLeft + list.clientWidth < list.scrollWidth - 1,
+      })
+    }
+    updateScrollButtons()
+    list.addEventListener('scroll', updateScrollButtons, { passive: true })
+    window.addEventListener('resize', updateScrollButtons)
+    return () => {
+      list.removeEventListener('scroll', updateScrollButtons)
+      window.removeEventListener('resize', updateScrollButtons)
+    }
+  }, [])
   useEffect(() => {
     if (t0 === null || phase !== 'form') return
     tick.current = setInterval(() => setSecs(Math.floor((Date.now() - t0) / 1000)), 250)
@@ -129,8 +148,8 @@ export default function LogView() {
     )
 
   return (
-    <div className="mx-auto grid max-w-[1300px] gap-5 ">
-      <div className="space-y-5 pb-24">
+    <div className="mx-auto grid w-full min-w-0 max-w-[1300px] gap-5">
+      <div className="min-w-0 space-y-5 pb-24">
         <Card>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="title-bar text-lg font-bold text-brand">1・選擇會員</h2>
@@ -142,13 +161,33 @@ export default function LogView() {
               </div>
             )}
           </div>
-          <div className="flex gap-3 overflow-x-auto pb-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              aria-label="向左瀏覽會員"
+              disabled={!memberScroll.left}
+              onClick={() => memberListRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
+              className="grid size-10 shrink-0 place-items-center rounded-xl bg-canvas text-brand transition hover:bg-brand-soft disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <ChevronLeft className="size-5" />
+            </button>
+            <div ref={memberListRef} className="flex min-w-0 flex-1 gap-3 overflow-x-auto scroll-smooth px-1 pb-2">
             {MEMBERS.map((m) => (
-              <motion.button key={m.id} whileTap={{ scale: 0.94 }} onClick={() => { setMid(m.id); start() }} className={`flex h-[72px] min-w-[150px] items-center gap-3 rounded-2xl px-4 text-left ring-2 transition ${mid === m.id ? 'bg-brand-soft ring-brand' : 'bg-canvas ring-transparent'}`}>
+              <motion.button key={m.id} whileTap={{ scale: 0.94 }} onClick={() => { setMid(m.id); start() }} className={`flex h-[72px] w-[150px] shrink-0 items-center gap-3 rounded-2xl px-4 text-left ring-2 transition ${mid === m.id ? 'bg-brand-soft ring-brand' : 'bg-canvas ring-transparent'}`}>
                 <Avatar text={m.name[0]} size={38} />
                 <span className="leading-tight"><b className="block">{m.name}</b><span className="text-[11px] text-ink-soft">{m.lastVisit[brand] ? `上次 ${m.lastVisit[brand]}` : '首次'}</span></span>
               </motion.button>
             ))}
+            </div>
+            <button
+              type="button"
+              aria-label="向右瀏覽會員"
+              disabled={!memberScroll.right}
+              onClick={() => memberListRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
+              className="grid size-10 shrink-0 place-items-center rounded-xl bg-canvas text-brand transition hover:bg-brand-soft disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <ChevronRight className="size-5" />
+            </button>
           </div>
         </Card>
 
