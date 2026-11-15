@@ -8,6 +8,7 @@ import { BrandTag, Bubble, Card, Pill, ease } from '../ui'
 
 const STEPS = ['人員登記', 'AI 整合', '人員審核', 'LINE 推送', '會員預約', '回寫 App']
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8100'
+const clinicRewardTerms = /折抵|贈點|點轉介|各得/
 type Schedule = { send_at: string; status: string; failure_reason?: string }
 const STAGE: Record<SugStatus, number> = { pending: 2, approved: 3, sent: 4, booked: 6 }
 const TABS: { k: SugStatus | 'all'; t: string }[] = [
@@ -35,6 +36,7 @@ export default function AIView() {
   const sel = suggestions.find((s) => s.id === selId) ?? list[0]
   const member = MEMBERS.find((m) => m.id === sel?.memberId)
   const issues = sel ? findIssues(sel.draft, sel.to) : []
+  const clinicRewardIssue = sel?.to === 'kang' && clinicRewardTerms.test(sel.draft)
   const timing = member ? bestTiming(member, suggestions) : null
   const selectedId = sel?.id
   const suggestedTiming = sel?.sendAt ?? timing?.label
@@ -239,7 +241,20 @@ export default function AIView() {
                     <span className="text-xs text-ink-soft">{member.name} 目前 <b className="num text-brand">{POINTS[member.id] ?? 0}</b> 點</span>
                   </div>
                   {sel.to === 'kang' ? (
-                    <div className="flex items-start gap-2 rounded-xl bg-sky px-3 py-2.5 text-xs leading-relaxed text-clinic"><Lock className="mt-0.5 size-3.5 shrink-0" />推薦對象為診所時不提供點數誘因,以避免以優惠招攬就醫(醫療法相關規範,請法遵確認)。</div>
+                    <div className="rounded-xl bg-sky px-3 py-2.5 text-xs leading-relaxed text-clinic">
+                      <div className="flex items-start gap-2"><Lock className="mt-0.5 size-3.5 shrink-0" />診所推薦不提供點數誘因。</div>
+                      {clinicRewardIssue && sel.status === 'pending' && (
+                        <>
+                          <p className="mt-2 font-semibold">草稿含點數或折抵說明，請先移除再核可。</p>
+                          <button type="button" className="mt-2 rounded-lg bg-brand px-4 py-2 font-bold text-white" onClick={() => {
+                            const revised = (sel.draft.match(/[^。！？；\n]+[。！？；]?|\n+/g) ?? [])
+                              .filter((sentence) => !clinicRewardTerms.test(sentence)).join('').trim()
+                            editDraft(sel.id, revised)
+                            toast('已移除含點數誘因的句子，請確認 LINE 預覽')
+                          }}>一鍵移除點數誘因</button>
+                        </>
+                      )}
+                    </div>
                   ) : (
                     <div className="flex flex-wrap items-center gap-3">
                       <button disabled={sel.status !== 'pending'} onClick={() => patchSug(sel.id, { reward: { ...reward, on: !reward.on } })} className={`relative h-7 w-12 rounded-full transition-colors disabled:opacity-60 ${reward.on ? 'bg-brand' : 'bg-line'}`} aria-label="切換點數回饋"><motion.span layout transition={{ type: 'spring', stiffness: 500, damping: 32 }} className={`absolute top-1 size-5 rounded-full bg-white shadow ${reward.on ? 'right-1' : 'left-1'}`} /></button>
@@ -254,7 +269,7 @@ export default function AIView() {
 
             <div className="flex flex-wrap gap-3">
               {sel.status === 'pending' && (
-                <motion.button whileTap={{ scale: 0.96 }} disabled={issues.length > 0} onClick={async () => { if (!(await setStatus(sel.id, 'approved'))) return; addAudit(`核可 ${member.name} 建議`); toast('已核可,可推送至 LINE') ; setTab('approved'); setSelId(sel.id) }} className="flex h-14 items-center gap-2 rounded-xl bg-brand px-8 font-bold text-white disabled:opacity-40"><Check />人員核可</motion.button>
+                <motion.button whileTap={{ scale: 0.96 }} disabled={issues.length > 0 || clinicRewardIssue || !sel.draft.trim()} onClick={async () => { if (!(await setStatus(sel.id, 'approved'))) return; addAudit(`核可 ${member.name} 建議`); toast('已核可,可推送至 LINE') ; setTab('approved'); setSelId(sel.id) }} className="flex h-14 items-center gap-2 rounded-xl bg-brand px-8 font-bold text-white disabled:opacity-40"><Check />人員核可</motion.button>
               )}
               {sel.status === 'approved' && (
                 <>
