@@ -295,24 +295,24 @@ MEMBER_BINDING_REQUIRED = "請先綁定會員，再使用這項服務。"
 async def _appointment_summary(user_id: str) -> str:
     member = await _backend_request("GET", f"/api/agent/customers/{user_id}")
     brands = {"tai": "泰晶殿", "mei": "美加醫美", "kang": "康博診所"}
-    bookings = member["bookings"]
-    next_booking = next((item for item in bookings if item["status"] == "已預約"), None)
-    def display(item: dict) -> str:
-        return f"{item['date']} {item['time']}｜{brands[item['brand']]}｜{item['svc']}｜{item['status']}｜{item['src']}"
-    cycle = member["cycle_days"]
-    return "\n".join([
-        "【我的預約｜示範資料】",
-        "下次預約：" + (display(next_booking) if next_booking else "目前沒有已預約紀錄"),
-        f"消費週期：約 {cycle} 天" if cycle else "消費週期：尚無資料",
-        "",
-        "【預約紀錄】",
-        *[display(item) for item in bookings],
-        *[
-            f"{item['appointment_time'] or '時段待確認'}｜{brands.get(item['brand'], item['brand'])}｜"
-            f"{item['service']}｜待門店確認｜{item['source']}"
-            for item in member.get("booking_requests", [])
-        ],
-    ])
+    bookings = [item for item in member["bookings"] if item["status"] == "已預約"]
+    sections = ["【康博集團｜我的預約】"]
+    if bookings:
+        sections.extend(
+            f"{item['date']} {item['time'][:5]}\n"
+            f"{brands.get(item['brand'], item['brand'])}｜{item['svc']}"
+            for item in bookings
+        )
+    else:
+        sections.append("目前沒有已確認的預約。")
+    requests = member.get("booking_requests", [])
+    if requests:
+        services = "\n".join(dict.fromkeys(
+            f"・{brands.get(item['brand'], item['brand'])}｜{item['service']}"
+            for item in requests
+        ))
+        sections.append(f"待門店確認的諮詢\n{services}")
+    return "\n\n".join(sections)
 
 
 @app.post("/internal/deliver-approved-suggestion")
