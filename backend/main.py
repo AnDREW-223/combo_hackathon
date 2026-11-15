@@ -1,12 +1,13 @@
 """管理後台後端：儲存資料、審核推薦、記錄 LINE 與預約回寫。"""
 
+import asyncio
 import json
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from dotenv import load_dotenv
@@ -22,6 +23,18 @@ from backend.schemas import (
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 
 app = FastAPI(title="康博管理後台 Backend", version="1.0.0")
+TAIPEI = timezone(timedelta(hours=8))
+DISCLAIMER = "※ 此為一般健康建議，非醫療診斷，不具宣稱療效。"
+
+
+def validate_push_draft(draft: str, brand: str) -> None:
+    words = ("保證", "根治", "治癒")
+    if brand != "kang":
+        words += ("治療", "療效", "改善", "神經痛", "診斷", "消炎", "降血糖")
+    if not draft.strip() or any(word in draft.replace(DISCLAIMER, "") for word in words):
+        raise HTTPException(status_code=409, detail="請先修改文案中的敏感用語")
+    if brand == "kang" and any(word in draft for word in ("折抵", "贈點", "點轉介", "各得")):
+        raise HTTPException(status_code=409, detail="診所推薦文案不可附點數誘因")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -34,8 +47,14 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     initialize_database()
+    app.state.delivery_worker = asyncio.create_task(delivery_worker())
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    app.state.delivery_worker.cancel()
 
 
 @app.get("/health")
@@ -78,17 +97,22 @@ def get_suggestion_or_404(suggestion_id: str) -> dict:
 
 
 @app.post("/api/suggestions/{suggestion_id}/approve")
-def approve_suggestion(suggestion_id: str) -> dict:
+def approve_suggestion(suggestion_id: str, draft: str | None = Body(default=None, embed=True)) -> dict:
     suggestion = get_suggestion_or_404(suggestion_id)
     if suggestion["status"] != "pending":
         raise HTTPException(status_code=409, detail="只有待審推薦可核可")
+    validate_push_draft(draft if draft is not None else suggestion["draft"], suggestion["to"])
     with connect() as connection:
-        connection.execute("UPDATE suggestions SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (suggestion_id,))
+        connection.execute("UPDATE suggestions SET status = 'approved', draft = COALESCE(?, draft), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'", (draft, suggestion_id))
     return get_suggestion_or_404(suggestion_id)
 
 
 @app.post("/api/suggestions/{suggestion_id}/mark-sent")
-async def mark_sent(suggestion_id: str) -> dict:
+async def send_test(suggestion_id: str) -> dict:
+    return await mark_sent(suggestion_id, test=True)
+
+
+async def mark_sent(suggestion_id: str, test: bool = False) -> dict:
     suggestion = get_suggestion_or_404(suggestion_id)
     if suggestion["status"] != "approved":
         raise HTTPException(status_code=409, detail="推薦須先經人員核可才可傳送")
@@ -97,8 +121,15 @@ async def mark_sent(suggestion_id: str) -> dict:
             "SELECT line_user_id FROM line_bindings WHERE member_id = ?",
             (suggestion["memberId"],),
         ).fetchone()
-    if binding is None:
+    demo_user = os.getenv("LINE_DEMO_USER_ID")
+    recipient = demo_user if suggestion["memberId"] == "m1" else (binding["line_user_id"] if binding else None)
+    if test and (suggestion["memberId"] != "m1" or not demo_user):
+        raise HTTPException(status_code=409, detail="立即測試只開放給已設定的 demo-001 帳號")
+    if not recipient:
         raise HTTPException(status_code=409, detail="此會員尚未綁定 LINE，無法推送")
+    if not get_member(suggestion["memberId"])["consent"]:
+        raise HTTPException(status_code=409, detail="會員未同意推播")
+    validate_push_draft(suggestion["draft"], suggestion["to"])
 
     agent_url = os.getenv("AGENT_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
     shared_secret = os.getenv("BACKEND_AGENT_SHARED_SECRET", "")
@@ -111,7 +142,7 @@ async def mark_sent(suggestion_id: str) -> dict:
                 headers={"X-Backend-Agent-Secret": shared_secret},
                 json={
                     "suggestion_id": suggestion_id,
-                    "line_user_id": binding["line_user_id"],
+                    "line_user_id": recipient,
                     # 只有通過管理人員核可的推薦，才要求 Agent 以互動卡片推送。
                     "card_title": suggestion["title"],
                     "message": suggestion["draft"],
@@ -126,10 +157,85 @@ async def mark_sent(suggestion_id: str) -> dict:
             )
         raise HTTPException(status_code=502, detail="LINE 推送失敗，請稍後重試") from exc
 
+    if test:
+        return suggestion
     with connect() as connection:
         connection.execute("UPDATE suggestions SET status = 'sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (suggestion_id,))
         connection.execute("INSERT INTO delivery_logs (suggestion_id, status, detail) VALUES (?, ?, ?)", (suggestion_id, "sent", "已由管理後台核可並交由 AI Agent 推送"))
     return get_suggestion_or_404(suggestion_id)
+
+
+@app.post("/api/suggestions/{suggestion_id}/schedule")
+def schedule_delivery(suggestion_id: str, send_at: datetime) -> dict:
+    suggestion = get_suggestion_or_404(suggestion_id)
+    if suggestion["status"] != "approved" or not get_member(suggestion["memberId"])["consent"]:
+        raise HTTPException(status_code=409, detail="僅可排程已核可且同意推播的推薦")
+    if send_at.tzinfo is None:
+        raise HTTPException(status_code=422, detail="送出時間須包含時區")
+    local = send_at.astimezone(TAIPEI)
+    if local <= datetime.now(TAIPEI) or not 9 <= local.hour < 21:
+        raise HTTPException(status_code=422, detail="請選擇未來的 09:00 至 20:59")
+    with connect() as connection:
+        connection.execute("""INSERT INTO scheduled_delivery (suggestion_id, send_at, status)
+                           VALUES (?, ?, 'queued')
+                           ON CONFLICT(suggestion_id) DO UPDATE SET send_at = excluded.send_at,
+                           status = 'queued', failure_reason = NULL
+                           WHERE scheduled_delivery.status IN ('queued', 'failed')""",
+                           (suggestion_id, local.timestamp()))
+    return get_schedule(suggestion_id)
+
+
+@app.get("/api/suggestions/{suggestion_id}/schedule")
+def get_schedule(suggestion_id: str) -> dict | None:
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM scheduled_delivery WHERE suggestion_id = ?", (suggestion_id,)).fetchone()
+    if row is None:
+        return None
+    return {"send_at": datetime.fromtimestamp(row["send_at"], TAIPEI).isoformat(),
+            "status": row["status"], "failure_reason": row["failure_reason"]}
+
+
+async def delivery_worker() -> None:
+    while True:
+        with connect() as connection:
+            due = connection.execute("SELECT * FROM scheduled_delivery WHERE status = 'queued' AND send_at <= ?",
+                                     (datetime.now(TAIPEI).timestamp(),)).fetchall()
+        for row in due:
+            suggestion_id = row["suggestion_id"]
+            now = datetime.now(TAIPEI)
+            if not 9 <= now.hour < 21:
+                continue
+            with connect() as connection:
+                claimed = connection.execute("UPDATE scheduled_delivery SET status = 'sending' WHERE suggestion_id = ? AND status = 'queued' AND send_at <= ?", (suggestion_id, now.timestamp())).rowcount
+            if not claimed:
+                continue
+            failure_reason = None
+            try:
+                suggestion = get_suggestion_or_404(suggestion_id)
+                member = get_member(suggestion["memberId"])
+                with connect() as connection:
+                    recent = connection.execute(
+                        """SELECT 1 FROM delivery_logs JOIN suggestions ON suggestions.id = delivery_logs.suggestion_id
+                           WHERE member_id = ? AND delivery_logs.status = 'sent'
+                           AND delivery_logs.created_at >= datetime('now', '-14 days')""", (suggestion["memberId"],)
+                    ).fetchone()
+                clinic_visit = member.get("last_visit", {}).get("kang")
+                clinic_day = datetime.strptime(f"{now.year}/{clinic_visit}", "%Y/%m/%d").date() if clinic_visit else None
+                if len(member["brands"]) == 3 and "VIP" in member["tags"] or recent or (
+                    clinic_day and 0 <= (now.date() - clinic_day).days <= 3
+                ):
+                    raise HTTPException(status_code=409, detail="會員目前不符合推播條件")
+                await mark_sent(suggestion_id)
+                status = "sent"
+            except HTTPException as exc:
+                status = "failed"
+                failure_reason = str(exc.detail)
+            except Exception:
+                status = "failed"
+                failure_reason = "後端處理推送時發生錯誤"
+            with connect() as connection:
+                connection.execute("UPDATE scheduled_delivery SET status = ?, failure_reason = ? WHERE suggestion_id = ?", (status, failure_reason, suggestion_id))
+        await asyncio.sleep(15)
 
 
 @app.post("/api/agent/recommendations", status_code=201)
@@ -198,7 +304,12 @@ def get_agent_customer(customer_id: str) -> dict:
             "purchased_on": f"{date.today().year}-{visited_on.replace('/', '-')}",
             "amount": 0,
         })
-    return {"user_id": customer_id, "available_points": 520, "purchases": purchases, "platform_member_id": member_id, "platform_member_name": member["name"]}
+    with connect() as connection:
+        requests = connection.execute(
+            "SELECT brand, service, appointment_time, source FROM appointments WHERE member_id = ? AND status = 'requested' ORDER BY id DESC",
+            (member_id,),
+        ).fetchall()
+    return {"user_id": customer_id, "available_points": member.get("available_points", 0), "purchases": purchases, "platform_member_id": member_id, "platform_member_name": member["name"], "bookings": member.get("bookings", []), "booking_requests": [dict(row) for row in requests], "cycle_days": member.get("cycle_days"), "next_due": member.get("next_due")}
 
 
 @app.post("/api/appointments", status_code=201)
@@ -209,7 +320,7 @@ def record_appointment(item: AppointmentRequest) -> dict:
     member = get_member(item.member_id)
     with connect() as connection:
         connection.execute("UPDATE suggestions SET status = 'booked', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (item.suggestion_id,))
-        connection.execute("INSERT INTO appointments (member_name, brand, service, appointment_time, source, note, status) VALUES (?, ?, ?, ?, ?, ?, 'requested')", (member["name"], suggestion["to"], suggestion["title"], item.preferred_time, "LINE 預約意願", item.note))
+        connection.execute("INSERT INTO appointments (member_id, member_name, brand, service, appointment_time, source, note, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'requested')", (item.member_id, member["name"], suggestion["to"], suggestion["title"], item.preferred_time, "LINE 預約意願", item.note))
         connection.execute("INSERT INTO delivery_logs (suggestion_id, status, detail) VALUES (?, ?, ?)", (item.suggestion_id, "booking_requested", "LINE 顧客提出預約意願"))
     return {"suggestion_id": item.suggestion_id, "appointment_requested": True}
 

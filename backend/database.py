@@ -8,6 +8,7 @@ from backend.seed_data import APPOINTMENTS, MEMBERS, SUGGESTIONS
 
 BACKEND_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BACKEND_DIR / "combo_backend.db"
+DEMO_POINTS = {"m1":420,"m2":180,"m3":90,"m4":60,"m5":1260,"m6":0,"m7":150,"m8":380,"m9":310,"m10":40,"m11":220,"m12":130}
 
 
 def connect() -> sqlite3.Connection:
@@ -57,6 +58,11 @@ def initialize_database() -> None:
                 line_user_id TEXT NOT NULL UNIQUE,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS scheduled_delivery (
+                suggestion_id TEXT PRIMARY KEY,
+                send_at REAL NOT NULL,
+                status TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS delivery_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 suggestion_id TEXT NOT NULL,
@@ -89,6 +95,26 @@ def initialize_database() -> None:
                 VALUES (?, ?, ?, ?, ?, ?)""",
                 [(item["member"], item["brand"], item["service"], item["time"], item["source"], item["note"]) for item in APPOINTMENTS],
             )
+
+        for table, column in (("scheduled_delivery", "failure_reason"), ("appointments", "member_id")):
+            if column not in {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+        connection.execute("""UPDATE appointments SET member_id = (
+            SELECT MIN(id) FROM members WHERE name = appointments.member_name HAVING COUNT(*) = 1
+        ) WHERE member_id IS NULL AND status = 'requested'""")
+        snapshot = json.loads((BACKEND_DIR / "frontend_members.json").read_text(encoding="utf-8"))
+        for member in snapshot:
+            existing = connection.execute("SELECT * FROM members WHERE id = ?", (member["id"],)).fetchone()
+            if existing:
+                payload = member_payload(existing)
+                payload.update({key: member[key] for key in ("bookings", "next_due", "cycle_days")})
+                payload.setdefault("available_points", DEMO_POINTS[member["id"]])
+                connection.execute("UPDATE members SET payload_json = ? WHERE id = ?",
+                                   (json.dumps(payload, ensure_ascii=False), member["id"]))
+            else:
+                member["available_points"] = DEMO_POINTS[member["id"]]
+                connection.execute("INSERT INTO members VALUES (?, ?, ?, ?)",
+                                   (member["id"], member["name"], int(member["consent"]), json.dumps(member, ensure_ascii=False)))
 
 
 def member_payload(row: sqlite3.Row) -> dict:

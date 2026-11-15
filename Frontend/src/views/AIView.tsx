@@ -1,12 +1,14 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { Check, Clock, Gift, HeartHandshake, Lock, MessageSquareText, ScanSearch, Send, ShieldAlert, ShieldCheck, Snowflake, Wand2 } from 'lucide-react'
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { BANNED, BRANDS, MEMBERS, POINTS, type BrandId, type SugStatus } from '../data'
 import { TIMING_OPTIONS, bestTiming, scan, toneCheck, warmRewrite } from '../smart'
-import { useStore } from '../store'
+import { lineDraft, useStore } from '../store'
 import { BrandTag, Bubble, Card, Pill, ease } from '../ui'
 
 const STEPS = ['人員登記', 'AI 整合', '人員審核', 'LINE 推送', '會員預約', '回寫 App']
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8100'
+type Schedule = { send_at: string; status: string; failure_reason?: string }
 const STAGE: Record<SugStatus, number> = { pending: 2, approved: 3, sent: 4, booked: 6 }
 const TABS: { k: SugStatus | 'all'; t: string }[] = [
   { k: 'pending', t: '待審核' },
@@ -18,26 +20,91 @@ const TABS: { k: SugStatus | 'all'; t: string }[] = [
 export function findIssues(text: string, to: BrandId) {
   const hard = Object.keys(BANNED)
   const list = to === 'kang' ? ['保證', '根治', '治癒'] : hard
-  return list.filter((w) => text.includes(w))
+  const draft = text.split('※ 此為一般健康建議，非醫療診斷，不具宣稱療效。').join('')
+  return list.filter((w) => draft.includes(w))
 }
 
 export default function AIView() {
   const { suggestions, setStatus, editDraft, toast, addAudit, addSuggestion, patchSug } = useStore()
   const [tab, setTab] = useState<SugStatus>('pending')
   const [selId, setSelId] = useState<string | null>(null)
+  const [sendAt, setSendAt] = useState('')
+  const [schedule, setSchedule] = useState<Schedule | null>(null)
+  const [savingSchedule, setSavingSchedule] = useState(false)
   const list = suggestions.filter((s) => s.status === tab)
   const sel = suggestions.find((s) => s.id === selId) ?? list[0]
   const member = MEMBERS.find((m) => m.id === sel?.memberId)
   const issues = sel ? findIssues(sel.draft, sel.to) : []
   const timing = member ? bestTiming(member, suggestions) : null
+  const selectedId = sel?.id
+  const suggestedTiming = sel?.sendAt ?? timing?.label
+  useEffect(() => {
+    setSchedule(null)
+    const now = new Date(Date.now() + 8 * 3600000)
+    const hour = suggestedTiming?.match(/\d{2}:\d{2}/)?.[0]
+    let suggested = ''
+    if (hour) {
+      const clock = now.toISOString().slice(11, 16)
+      if (clock >= hour) now.setUTCDate(now.getUTCDate() + 1)
+      while ([0, 6].includes(now.getUTCDay())) now.setUTCDate(now.getUTCDate() + 1)
+      suggested = `${now.toISOString().slice(0, 10)}T${hour}`
+    }
+    setSendAt(suggested)
+    if (!selectedId) return
+    let active = true
+    const refresh = async () => {
+      try {
+        const response = await fetch(`${backendUrl}/api/suggestions/${selectedId}/schedule`)
+        if (!response.ok) return
+        const result: Schedule | null = await response.json()
+        if (active) setSchedule(result)
+      } catch {
+        // 保留最近一次查到的排程狀態。
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 5000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [selectedId, suggestedTiming])
   const tone = sel ? toneCheck(sel.draft) : null
   const reward = sel?.reward ?? { on: false, pts: 200 }
-  const runScan = () => {
+  const schedulePush = async (id: string) => {
+    setSavingSchedule(true)
+    try {
+      const query = new URLSearchParams({ send_at: `${sendAt}:00+08:00` })
+      const response = await fetch(`${backendUrl}/api/suggestions/${id}/schedule?${query}`, { method: 'POST' })
+      const result = await response.json()
+      if (!response.ok) {
+        toast(typeof result.detail === 'string' ? result.detail : '請確認排程時間', 'warn')
+        return
+      }
+      setSchedule(result)
+      toast(`送出時間：${result.send_at.slice(0, 16).replace('T', ' ')}（台灣時間）`)
+    } catch {
+      toast('無法連線到後端，請稍後再試', 'warn')
+    } finally {
+      setSavingSchedule(false)
+    }
+  }
+  const runScan = async () => {
     const { made, skipped } = scan(suggestions)
-    made.forEach(addSuggestion)
-    addAudit(`AI 掃描:產生 ${made.length} 則待審建議,略過 ${skipped.length} 位`)
-    if (made.length) { setTab('pending'); setSelId(made[0].id) }
-    toast(made.length ? `已產生 ${made.length} 則待審建議;${skipped.length} 位因合規/關懷規則略過` : `沒有新的合適時機;${skipped.length} 位因合規/關懷規則略過`, made.length ? 'ok' : 'warn')
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8100'
+    const saved = await Promise.allSettled(made.map(async (item) => {
+      const response = await fetch(`${backendUrl}/api/agent/recommendations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ member_id: item.memberId, from_brand: item.from, to_brand: item.to,
+          title: item.title, draft: item.draft, why: item.why, confidence: item.conf, cold: item.cold }),
+      })
+      if (!response.ok) throw new Error('無法儲存建議')
+      const result = { ...item, ...await response.json() }
+      addSuggestion(result)
+      return result.id as string
+    }))
+    const ids = saved.flatMap((item) => item.status === 'fulfilled' ? [item.value] : [])
+    const failed = made.length - ids.length
+    if (ids.length) { setTab('pending'); setSelId(ids[0]) }
+    toast(`已儲存 ${ids.length} 則待審建議，略過 ${skipped.length} 位${failed ? `，${failed} 則儲存失敗` : ''}`, failed ? 'warn' : 'ok')
   }
 
   const highlight = (t: string, words: string[]) => {
@@ -190,7 +257,16 @@ export default function AIView() {
                 <motion.button whileTap={{ scale: 0.96 }} disabled={issues.length > 0} onClick={async () => { if (!(await setStatus(sel.id, 'approved'))) return; addAudit(`核可 ${member.name} 建議`); toast('已核可,可推送至 LINE') ; setTab('approved'); setSelId(sel.id) }} className="flex h-14 items-center gap-2 rounded-xl bg-brand px-8 font-bold text-white disabled:opacity-40"><Check />人員核可</motion.button>
               )}
               {sel.status === 'approved' && (
-                <motion.button whileTap={{ scale: 0.96 }} disabled={!member.consent} onClick={async () => { if (!(await setStatus(sel.id, 'sent'))) return; addAudit(`推送 LINE 給 ${member.name}`); toast(`已排程 LINE 推送:${sel.sendAt ?? timing?.label ?? '立即'}`); setTab('sent') }} className="flex h-14 items-center gap-2 rounded-xl bg-[#06c755] px-8 font-bold text-white disabled:opacity-40"><Send />推送到 LINE</motion.button>
+                <>
+                  <label className="flex items-center gap-2 text-sm">送出時間（台灣）<input type="datetime-local" value={sendAt} onChange={(e) => setSendAt(e.target.value)} /></label>
+                  <button disabled={!member.consent || !sendAt || savingSchedule || schedule?.status === 'sending' || schedule?.status === 'sent'} onClick={() => void schedulePush(sel.id)} className="rounded-xl bg-brand px-4 py-3 font-bold text-white disabled:opacity-40">{schedule?.status === 'failed' || schedule?.status === 'queued' ? '重新排程' : '排程推送'}</button>
+                  {schedule && <p className="w-full text-sm" role="status">
+                    {({ queued: '已排程', sending: '推送中', sent: '已推送', failed: '推送失敗' } as Record<string, string>)[schedule.status]}
+                    {' · '}{schedule.send_at.slice(0, 16).replace('T', ' ')}（台灣時間）
+                    {schedule.failure_reason && ` · ${schedule.failure_reason}`}
+                  </p>}
+                  {member.id === 'm1' && <button disabled={!member.consent} onClick={async () => { if (await setStatus(sel.id, 'sent')) toast('已立即推送至測試帳號') }} className="flex items-center gap-2 rounded-xl bg-[#06c755] px-4 py-3 font-bold text-white disabled:opacity-40"><Send />立即測試</button>}
+                </>
               )}
               {sel.status === 'approved' && !member.consent && <span className="self-center text-sm font-semibold text-crimson">會員未同意推播,無法發送</span>}
               {sel.status === 'sent' && (
@@ -201,7 +277,7 @@ export default function AIView() {
           </div>
           <Card delay={0.15} className="h-fit 2xl:sticky 2xl:top-0">
             <div className="mb-3 text-sm font-bold text-brand">會員端 LINE 預覽</div>
-            <Bubble text={sel.draft + (reward.on && sel.to !== 'kang' ? `\n\n小心意:若您邀請好友一起體驗,雙方各得 ${reward.pts} 點。` : '')} from={BRANDS[sel.to].name} />
+            <Bubble text={lineDraft(sel)} from={BRANDS[sel.to].name} />
           </Card>
         </motion.div>
       ) : (

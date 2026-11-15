@@ -266,6 +266,8 @@ def cross_brand_incentive_text(
 ) -> str:
     """用可解釋規則補上跨品牌誘因；不宣稱醫療效果。"""
 
+    if option.brand == "康博診所":
+        return ""
     recent_purchases = sorted(history.purchases, key=lambda purchase: purchase.purchased_on, reverse=True)
     source_brand = next(
         (purchase.brand for purchase in recent_purchases if purchase.brand != option.brand), None

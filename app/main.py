@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import secrets
 from pathlib import Path
 from urllib.parse import parse_qsl
@@ -276,13 +277,42 @@ async def _backend_request(
         return response.json()
 
 
-def resolve_customer_id(event: MessageEvent) -> str:
+def resolve_customer_id(event: MessageEvent | PostbackEvent) -> str | None:
     """將 LINE 使用者對應到企業 customer_id 的預留介面。"""
 
     # TODO(backend-integration): 以 event.source.user_id 呼叫後端的會員綁定
     # 查詢/識別 API，取得企業 customer_id。不要假設 LINE user_id 就是 customer_id。
     # 後端尚未提供識別 API 前，保留 hackathon demo 的假資料行為。
-    return "demo-001"
+    demo_user = os.getenv("LINE_DEMO_USER_ID")
+    if demo_user and getattr(event.source, "type", None) == "user" and event.source.user_id == demo_user:
+        return "demo-001"
+    return None
+
+
+MEMBER_BINDING_REQUIRED = "請先綁定會員，再使用這項服務。"
+
+
+async def _appointment_summary(user_id: str) -> str:
+    member = await _backend_request("GET", f"/api/agent/customers/{user_id}")
+    brands = {"tai": "泰晶殿", "mei": "美加醫美", "kang": "康博診所"}
+    bookings = member["bookings"]
+    next_booking = next((item for item in bookings if item["status"] == "已預約"), None)
+    def display(item: dict) -> str:
+        return f"{item['date']} {item['time']}｜{brands[item['brand']]}｜{item['svc']}｜{item['status']}｜{item['src']}"
+    cycle = member["cycle_days"]
+    return "\n".join([
+        "【我的預約｜示範資料】",
+        "下次預約：" + (display(next_booking) if next_booking else "目前沒有已預約紀錄"),
+        f"消費週期：約 {cycle} 天" if cycle else "消費週期：尚無資料",
+        "",
+        "【預約紀錄】",
+        *[display(item) for item in bookings],
+        *[
+            f"{item['appointment_time'] or '時段待確認'}｜{brands.get(item['brand'], item['brand'])}｜"
+            f"{item['service']}｜待門店確認｜{item['source']}"
+            for item in member.get("booking_requests", [])
+        ],
+    ])
 
 
 @app.post("/internal/deliver-approved-suggestion")
@@ -384,6 +414,8 @@ async def line_callback(request: Request) -> dict[str, str]:
         action = dict(parse_qsl(event.postback.data)).get("action")
         if action == "help":
             reply_message = STATIC_REPLY_MESSAGES["使用說明"]
+        elif action in {"booking", "points"} and user_id is None:
+            reply_message = MEMBER_BINDING_REQUIRED
         elif action == "booking":
             try:
                 profile = await _backend_request("GET", f"/api/agent/customers/{user_id}")
@@ -431,7 +463,7 @@ async def line_callback(request: Request) -> dict[str, str]:
         user_text = event.message.text.strip()
         user_id = resolve_customer_id(event)
         conversation_id = getattr(event.source, "user_id", None) or user_id
-        if settings.backend_base_url and getattr(event.source, "user_id", None):
+        if settings.backend_base_url and user_id:
             try:
                 profile = await _backend_request(
                     "GET", f"/api/agent/customers/{user_id}"
@@ -451,6 +483,16 @@ async def line_callback(request: Request) -> dict[str, str]:
         elif user_text in {"重新開始", "重置對話"}:
             await reset_conversation(conversation_id)
             reply_message = "已清除本次對話內容。您可以輸入「推薦」重新開始。"
+        elif user_id is None and static_reply_for_text(user_text) not in (
+            STATIC_REPLY_MESSAGES["服務選單"], STATIC_REPLY_MESSAGES["使用說明"]
+        ):
+            reply_message = MEMBER_BINDING_REQUIRED
+        elif "我的預約" in user_text or "預約查詢" in user_text:
+            try:
+                reply_message = await _appointment_summary(user_id)
+            except Exception:
+                logger.exception("LINE 預約查詢失敗。")
+                reply_message = "目前無法讀取預約紀錄，請稍後再試。"
         elif static_reply := static_reply_for_text(user_text):
             # 關鍵字服務不呼叫 Gemini，做出官方帳號穩定且低成本的體驗。
             reply_message = static_reply

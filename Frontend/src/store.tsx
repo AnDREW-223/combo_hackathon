@@ -14,6 +14,12 @@ import {
 
 export type View = 'home' | 'members' | 'log' | 'ai' | 'manager' | 'privacy'
 
+export function lineDraft(suggestion: Suggestion): string {
+  const { draft, reward, to, status } = suggestion
+  if (status !== 'pending' || !reward?.on || to === 'kang') return draft
+  return `${draft}\n\n感謝您分享服務資訊。若您主動介紹且好友完成體驗，雙方各可獲得 ${reward.pts} 點，依活動規則折抵非醫療服務。`
+}
+
 export interface Audit {
   id: number
   t: string
@@ -117,7 +123,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : null
       if (endpoint) {
         try {
-          const response = await fetch(`${backendUrl}${endpoint}`, { method: 'POST' })
+          const response = await fetch(`${backendUrl}${endpoint}`, {
+            method: 'POST',
+            ...(s === 'approved' && original ? {
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                draft: lineDraft(original),
+              }),
+            } : {}),
+          })
           if (!response.ok) {
             const error = await response.json().catch(() => null)
             toast(typeof error?.detail === 'string' ? error.detail : `操作失敗（HTTP ${response.status}）`, 'warn')
